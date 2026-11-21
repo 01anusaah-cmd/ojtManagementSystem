@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -19,6 +21,10 @@ let state = null;          // full app data
 let session = null;        // { userId }
 let currentTab = null;     // active nav tab per role
 let activeModal = null;    // modal render fn
+let teacherCharts = [];
+let studentCharts = [];
+let teacherClockTimer = null;
+let studentClockTimer = null;
  
 /* ---------------- Seed data ---------------- */
 function seedState(){
@@ -179,16 +185,23 @@ function renderAuth(){
   <div class="auth-wrap">
     <div class="auth-card">
       <div class="auth-side">
-        <div class="brand-mark">L</div>
-        <h1>OJT Management System Login Page</h1>
-        <p>One record for every trainee: requirements, company placement, daily time log, and the hours that count toward completion — reviewed and sealed by your coordinator.</p>
-        <div class="tag">⟡ Est. records for accountable training</div>
+        <div class="brand-mark">OJT</div>
+        <p class="auth-eyebrow">Training records</p>
+        <h1>Manage your OJT journey.</h1>
+        <p>Track requirements, attendance, company placement, and approved training hours in one place.</p>
       </div>
       <div class="auth-form">
-        <div class="auth-tabs">
-          <button class="auth-tab ${authRole==='teacher'?'active':''}" data-role="teacher">Teacher</button>
-          <button class="auth-tab ${authRole==='student'?'active':''}" data-role="student">Student</button>
-        </div>
+        <p class="auth-kicker">OJT Management System</p>
+        <h1>${authMode==='login' ? 'Welcome back' : 'Create student account'}</h1>
+        ${authMode==='login' ? `
+        <div class="auth-tabs" role="tablist" aria-label="Login account type">
+          <button class="auth-tab ${authRole==='teacher'?'active':''}" type="button" role="tab" data-role="teacher" aria-selected="${authRole==='teacher'}">
+            Teacher
+          </button>
+          <button class="auth-tab ${authRole==='student'?'active':''}" type="button" role="tab" data-role="student" aria-selected="${authRole==='student'}">
+            Student
+          </button>
+        </div>` : ''}
         <div class="error-box ${authError?'show':''}" id="authErr">${esc(authError)}</div>
         ${authMode==='login' ? renderLoginForm() : renderRegisterForm()}
       </div>
@@ -199,10 +212,12 @@ function renderAuth(){
 function renderLoginForm(){
   return `
   <form id="loginForm">
-    <div class="field"><label>Full Name</label><input name="username" autocomplete="name" placeholder="e.g. Juan Dela Cruz" required></div>
-    <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" placeholder="••••••••" required></div>
-    <button class="btn gold" type="submit" style="width:100%; padding:11px; margin-top:6px;">Sign in →</button>
-    <p class="hint">Teacher account: <b class="mono">admin / admin123</b><br>Student account: <b class="mono">student / student123</b></p>
+    <div class="field"><label>${authRole==='teacher'?'Teacher username':'Student username'}</label><input name="username" autocomplete="username" placeholder="${authRole==='teacher'?'Enter teacher username':'Enter student username'}" required></div>
+    <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" placeholder="Enter password" required></div>
+    <button class="btn gold" type="submit" style="width:100%; padding:12px; margin-top:6px;">Sign in</button>
+    ${authRole==='teacher'
+      ? '<p class="hint">Demo teacher: <b class="mono">admin / admin123</b></p>'
+      : '<p class="hint">Demo student: <b class="mono">student / student123</b></p>'}
     <button class="text-link" type="button" data-switch-auth="register">Register as a student</button>
   </form>`;
 }
@@ -226,8 +241,12 @@ function renderRegisterForm(){
   </form>`;
 }
 function bindAuthEvents(){
-  $$(".auth-tab").forEach(t => t.addEventListener("click", ()=>{ authRole = t.dataset.role; authMode="login"; authError=""; render(); }));
-  $$('[data-switch-auth]').forEach(link => link.addEventListener("click", ()=>{ authMode = link.dataset.switchAuth; if(authMode === "register") authRole = "student"; authError=""; render(); }));
+  $$(".auth-tab").forEach(tab => tab.addEventListener("click", () => {
+    authRole = tab.dataset.role;
+    authError = "";
+    render();
+  }));
+  $$('[data-switch-auth]').forEach(link => link.addEventListener("click", ()=>{ authMode = link.dataset.switchAuth; authError=""; render(); }));
   const lf = $("#loginForm");
   if(lf) lf.addEventListener("submit", e=>{
     e.preventDefault();
@@ -252,24 +271,30 @@ function bindAuthEvents(){
 function navConfig(role){
   if(role === "coordinator"){
     return [
-      { group:"Overview", items:[ {id:"admin-dashboard", label:"Dashboard"} ] },
-      { group:"Students & Companies", items:[
-        {id:"admin-users", label:"Students"},
-        {id:"admin-students", label:"Companies"} ] },
-      { group:"Records", items:[
-        {id:"admin-attendance", label:"Attendance", badge: pendingDtrCount()},
-        {id:"admin-daily-activities", label:"Daily Activities"},
-        {id:"admin-reports", label:"Reports"} ] },
-      { group:"Configuration", items:[ {id:"admin-settings", label:"System Settings"} ] }
+      { group:"Menu", items:[
+        {id:"admin-dashboard", label:"Dashboard", icon:"layout-dashboard"},
+        {id:"admin-users", label:"Students", icon:"graduation-cap"},
+        {id:"admin-students", label:"Companies", icon:"building-2"},
+        {id:"admin-attendance", label:"Attendance", icon:"calendar-check", badge: pendingDtrCount()},
+        {id:"admin-daily-activities", label:"Daily Activities", icon:"clipboard-list"},
+        {id:"admin-reports", label:"Reports", icon:"chart-no-axes-combined"},
+        {id:"admin-messages", label:"Messages", icon:"message-square", badge:2},
+        {id:"admin-profile", label:"Profile", icon:"user-round"},
+        {id:"admin-settings", label:"Settings", icon:"settings"}
+      ] }
     ];
   }
   return [
-    { group:"Overview", items:[ {id:"dashboard", label:"Dashboard"} ] },
-    { group:"Account", items:[ {id:"student-profile", label:"My Profile"}, {id:"student-settings", label:"Settings"} ] },
-    { group:"OJT Information", items:[ {id:"company", label:"My OJT Details"}, {id:"feedback", label:"Reports"} ] },
-    { group:"Training Records", items:[
-      {id:"dtr", label:"Daily Activities"},
-      {id:"hours", label:"Attendance"} ] }
+    { group:"Menu", items:[
+      {id:"dashboard", label:"Dashboard", icon:"layout-dashboard"},
+      {id:"student-profile", label:"My Profile", icon:"user-round"},
+      {id:"company", label:"My Company", icon:"building-2"},
+      {id:"hours", label:"Attendance", icon:"calendar-check"},
+      {id:"dtr", label:"Daily Activities", icon:"clipboard-list"},
+      {id:"requirements", label:"Requirements", icon:"folder-check"},
+      {id:"feedback", label:"Evaluation", icon:"award"},
+      {id:"student-messages", label:"Messages", icon:"message-square", badge:1}
+    ] }
   ];
 }
 function pendingDtrCount(){
@@ -282,11 +307,14 @@ function pendingReqCount(){
 function renderShell(user){
   const groups = navConfig(user.role);
   const initials = user.fullName.split(" ").map(s=>s[0]).slice(0,2).join("").toUpperCase();
+  const isTeacher = user.role === "coordinator";
+  const isStudent = user.role === "student";
   return `
-  <div class="shell">
-    <aside class="sidebar">
+  <div class="shell ${isTeacher?'teacher-shell':''} ${isStudent?'student-shell':''}">
+    <aside class="sidebar ${isTeacher?'teacher-sidebar':''} ${isStudent?'student-sidebar':''}">
+      ${(isTeacher||isStudent)?'<button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Toggle sidebar"><i data-lucide="panel-left-close"></i></button>':''}
       <div class="sb-brand">
-        <div class="mark">L</div>
+        <div class="mark">OJT</div>
         <div>OJT Management System<span>Records Office</span></div>
       </div>
       <nav>
@@ -294,7 +322,8 @@ function renderShell(user){
           <div class="nav-group-label">${g.group}</div>
           ${g.items.map(it => `
             <button class="nav-item ${currentTab===it.id?'active':''}" data-tab="${it.id}">
-              <span class="dot"></span>${it.label}
+              ${it.icon ? `<i class="nav-icon" data-lucide="${it.icon}"></i>` : '<span class="dot"></span>'}
+              <span class="nav-label">${it.label}</span>
               ${it.badge ? `<span class="badge">${it.badge}</span>` : ""}
             </button>`).join("")}
         `).join("")}
@@ -307,7 +336,7 @@ function renderShell(user){
             <span>${user.role === "coordinator" ? "Teacher" : "Student"}</span>
           </div>
         </div>
-        <button class="btn secondary small" id="logoutBtn" style="width:100%; margin-top:10px; color:#EFEDE6; border-color:rgba(255,255,255,0.25);">Sign out</button>
+        <button class="btn secondary small" id="logoutBtn" style="width:100%; margin-top:10px; color:#EFEDE6; border-color:rgba(255,255,255,0.25);"><i data-lucide="log-out"></i><span>Logout</span></button>
       </div>
     </aside>
     <main class="main">
@@ -318,8 +347,48 @@ function renderShell(user){
  
 function bindShellEvents(user){
   $$(".nav-item").forEach(b => b.addEventListener("click", ()=>{ currentTab = b.dataset.tab; render(); }));
-  $("#logoutBtn").addEventListener("click", doLogout);
+  const logoutBtn = $("#logoutBtn");
+  if(logoutBtn) logoutBtn.addEventListener("click", doLogout);
+  if(user.role === "coordinator"){
+    const toggle = $("#sidebarToggle");
+    if(toggle) toggle.addEventListener("click", ()=>{
+      const shell = $(".teacher-shell");
+      if(window.matchMedia("(max-width: 880px)").matches){
+        shell?.classList.toggle("mobile-menu-open");
+      }else{
+        shell?.classList.toggle("sidebar-collapsed");
+        toggle.setAttribute("aria-label", shell?.classList.contains("sidebar-collapsed") ? "Expand sidebar" : "Collapse sidebar");
+      }
+    });
+    const mobileToggle = $("#mobileSidebarToggle");
+    if(mobileToggle) mobileToggle.addEventListener("click", ()=>{
+      $(".teacher-shell")?.classList.toggle("mobile-menu-open");
+    });
+    initTeacherDashboard();
+    const sendMessage = $("#demoSendMessage");
+    if(sendMessage) sendMessage.addEventListener("click", ()=>{
+      toast("Message prepared. Demo messaging does not send external notifications.");
+    });
+  }
+  if(user.role === "student"){
+    const toggle = $("#sidebarToggle");
+    if(toggle) toggle.addEventListener("click", ()=>{
+      const shell = $(".student-shell");
+      if(window.matchMedia("(max-width: 880px)").matches){
+        shell?.classList.toggle("mobile-menu-open");
+      }else{
+        shell?.classList.toggle("sidebar-collapsed");
+        toggle.setAttribute("aria-label", shell?.classList.contains("sidebar-collapsed") ? "Expand sidebar" : "Collapse sidebar");
+      }
+    });
+    const mobileToggle = $("#mobileSidebarToggle");
+    if(mobileToggle) mobileToggle.addEventListener("click", ()=>{
+      $(".student-shell")?.classList.toggle("mobile-menu-open");
+    });
+    initStudentDashboard();
+  }
   bindTabEvents(user);
+  if(window.lucide) window.lucide.createIcons();
 }
  
 /* =========================================================
@@ -334,69 +403,220 @@ function renderStudentTab(user){
     case "hours": return renderStudentHours(user);
     case "feedback": return renderStudentFeedback(user);
     case "student-settings": return renderStudentSettings(user);
+    case "student-messages": return renderStudentMessages(user);
     default: return renderStudentDashboard(user);
   }
 }
  
+function studentStatCard(icon, accent, label, value, detail){
+  return `
+  <article class="student-stat-card ${accent}">
+    <span class="student-stat-icon"><i data-lucide="${icon}"></i></span>
+    <div><p>${label}</p><strong>${value}</strong><div class="student-stat-detail">${detail}</div></div>
+  </article>`;
+}
+
+function studentAnnouncement(title, description, date, priority){
+  return `
+  <article class="student-announcement ${priority}">
+    <span class="announcement-icon"><i data-lucide="${priority==='high'?'bell-ring':'info'}"></i></span>
+    <div><strong>${title}</strong><p>${description}</p><time>${date}</time></div>
+  </article>`;
+}
+
+function studentEvent(day, month, title, detail, accent){
+  return `
+  <article class="student-event">
+    <time class="${accent}"><b>${day}</b><span>${month}</span></time>
+    <div><strong>${title}</strong><span>${detail}</span></div>
+  </article>`;
+}
+
+function studentQuickAction(icon, accent, label, tab){
+  return `<button class="student-quick-action ${accent}" type="button" data-tab="${tab}">
+    <span><i data-lucide="${icon}"></i></span><b>${label}</b>
+  </button>`;
+}
+
+function renderStudentActivityTimeline(rec){
+  const rows = [];
+  rec.dtr.forEach(d=>rows.push({date:d.date,time:d.timeIn,title:"Logged Daily Activity",description:d.task,status:d.status}));
+  rec.requirementSubmissions.forEach(r=>{
+    rows.push({date:fmtDate(r.submittedAt?new Date(r.submittedAt).toISOString().slice(0,10):""),time:"",title:"Uploaded OJT Requirement",description:r.fileName,status:r.status});
+  });
+  rows.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  if(!rows.length){
+    return `<div class="student-empty">No recent activities yet</div>`;
+  }
+  return `<div class="student-timeline">${rows.slice(0,4).map(row=>`
+    <article>
+      <span class="timeline-dot ${row.status}"></span>
+      <time>${row.date}${row.time?` · ${esc(row.time)}`:""}</time>
+      <div><strong>${esc(row.title)}</strong><p>${esc(row.description)}</p></div>
+      <b class="activity-status ${row.status}">${row.status}</b>
+    </article>`).join("")}</div>`;
+}
+
 function renderStudentDashboard(user){
   const rec = studentRecord(user.id);
   const req = state.settings.requiredHours;
   const done = totalApprovedHours(user.id);
   const pct = Math.min(100, Math.round((done/req)*100));
-  const circumference = 2*Math.PI*54;
-  const offset = circumference * (1 - pct/100);
   const pendingReqs = rec.requirementSubmissions.filter(r=>r.status==="pending").length;
   const pendingDtr = rec.dtr.filter(d=>d.status==="pending").length;
   const lastFeedback = rec.evaluations[rec.evaluations.length-1];
+  const remaining = Math.max(0, req-done);
+  const approvedDays = new Set(rec.dtr.filter(d=>d.status==="approved").map(d=>d.date)).size;
+  const gradeLabel = user.className || user.program || "OJT Student";
  
   return `
-  <div class="topbar">
-    <div><div class="eyebrow">My Profile</div><h2>My Internship Progress</h2>
-      <div class="sub">${esc(user.program||"")} · ID ${esc(user.studentId||"—")}</div></div>
+  <div class="student-dashboard">
+  <div class="student-header">
+    <div>
+      <p class="student-breadcrumb">Dashboard / Overview</p>
+      <h1>Student Dashboard</h1>
+      <p>Track your OJT progress and stay updated.</p>
+    </div>
+    <div class="student-header-actions">
+      <button class="student-mobile-menu" id="mobileSidebarToggle" type="button" aria-label="Open menu"><i data-lucide="menu"></i></button>
+      <button class="student-icon-button" id="studentNotificationBtn" type="button" aria-label="Notifications"><i data-lucide="bell"></i><span>1</span></button>
+      <div class="student-live-date">
+        <strong id="studentClockDate"></strong>
+        <small id="studentClockTime"></small>
+      </div>
+    </div>
   </div>
  
-  <div class="grid grid-3" style="margin-bottom:18px;">
-    <div class="card" style="grid-column:span 1;">
-      <div class="eyebrow">Hours Progress</div>
-      <div class="seal-wrap">
-        <div class="seal">
-          <svg width="132" height="132" viewBox="0 0 132 132">
-            <circle cx="66" cy="66" r="54" fill="none" stroke="#E4E0D4" stroke-width="10"/>
-            <circle cx="66" cy="66" r="54" fill="none" stroke="#C89B3C" stroke-width="10" stroke-linecap="round"
-              stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
-          </svg>
-          <div class="center"><b>${pct}%</b><span>complete</span></div>
+  <div class="student-stat-grid">
+    ${studentStatCard("clock-3","blue","OJT Hours",`${done} / ${req}`,`<div class="student-progress"><div style="width:${pct}%"></div></div><span>${pct}% completed · ${remaining} remaining</span>`)}
+    ${studentStatCard("building-2","green","Company",rec.company?esc(rec.company.name):"Not assigned",rec.company?`Supervisor: ${esc(rec.company.supervisor||"—")}`:"Awaiting coordinator placement")}
+    ${studentStatCard("calendar-check","orange","DTR Status",`${approvedDays} days`,pendingDtr?`${pendingDtr} attendance record${pendingDtr===1?"":"s"} pending`:"No pending attendance records")}
+    ${studentStatCard("award","purple","Evaluation",lastFeedback?"Completed":"Pending",lastFeedback?`Score: ${Math.round(lastFeedback.rating*20)} / 100`:"Waiting for coordinator review")}
+  </div>
+ 
+  <div class="student-content-grid">
+    <section class="student-panel student-progress-card">
+      <div class="student-panel-head">
+        <div><h3>My OJT Progress</h3><p>Overall training completion</p></div>
+        <span class="student-percent">${pct}%</span>
+      </div>
+      <div class="student-progress-layout">
+        <div class="student-doughnut"><canvas id="studentProgressChart" height="210"></canvas><div><strong>${pct}%</strong><span>Completed</span></div></div>
+        <div class="student-progress-summary">
+          <div><span class="progress-dot completed"></span><p>Completed hours</p><strong>${done}</strong></div>
+          <div><span class="progress-dot remaining"></span><p>Remaining hours</p><strong>${remaining}</strong></div>
+          <div><span class="progress-dot total"></span><p>Total required</p><strong>${req}</strong></div>
+          <blockquote>${pct>=75?"Excellent progress — keep up the strong work!":pct>=50?"You're on track to complete your OJT requirements!":"Stay consistent and complete your submitted activities."}</blockquote>
         </div>
-        <dl class="seal-detail" style="margin:0;">
-          <dt>Completed</dt><dd>${done} hrs</dd>
-          <dt>Required</dt><dd>${req} hrs</dd>
-        </dl>
       </div>
-    </div>
-    <div class="card stat-card">
-      <div class="label">Company Assignment</div>
-      <div style="font-family:'Fraunces',serif; font-size:19px; margin-top:8px;">${rec.company ? esc(rec.company.name) : "Not yet assigned"}</div>
-      <div class="delta ${rec.company?'up':'warn'}">${rec.company ? "Supervisor: "+esc(rec.company.supervisor) : "Awaiting coordinator placement"}</div>
-      <hr class="divider">
-      <div class="label">Pending Reviews</div>
-      <div style="margin-top:8px; font-size:13px; line-height:1.9;">
-        <div>Requirements pending: <b>${pendingReqs}</b></div>
-        <div>DTR entries pending: <b>${pendingDtr}</b></div>
+    </section>
+    <section class="student-panel student-announcements">
+      <div class="student-panel-head">
+        <div><h3>Announcements</h3><p>Messages from your coordinator</p></div>
+        <button class="student-link-button" type="button" data-tab="student-messages">View All</button>
       </div>
-    </div>
-    <div class="card">
-      <div class="eyebrow">Latest Evaluation</div>
-      ${lastFeedback ? `
-        <div class="stars" style="margin-top:6px;">${"★".repeat(lastFeedback.rating)}${"☆".repeat(5-lastFeedback.rating)}</div>
-        <p style="font-size:13px; color:var(--ink-soft); line-height:1.55; margin-top:8px;">${esc(lastFeedback.comments).slice(0,140)}${lastFeedback.comments.length>140?'…':''}</p>
-        <div style="font-size:11.5px; color:var(--muted); margin-top:8px;" class="mono">${esc(lastFeedback.by)} · ${fmtDate(lastFeedback.date)}</div>
-      ` : `<p style="font-size:13px; color:var(--muted); margin-top:10px;">No evaluations submitted yet.</p>`}
-    </div>
+      ${studentAnnouncement("Submit Your Weekly DTR","Reminder: weekly attendance entries are due Friday.","Today","high")}
+      ${studentAnnouncement("OJT Evaluation Schedule","Evaluation dates will be announced by your coordinator.","Sep 18","normal")}
+      ${studentAnnouncement("OJT Guidelines","Review updated requirements before submission.","Sep 15","normal")}
+    </section>
   </div>
- 
-  <div class="card">
-    <div class="section-head"><h3>Recent Time Log</h3><button class="btn secondary small" data-tab="dtr">Open full log →</button></div>
-    ${renderDtrTable(rec.dtr.slice(-4).reverse(), false)}
+
+  <div class="student-content-grid student-middle-grid">
+    <section class="student-panel">
+      <div class="student-panel-head">
+        <div><h3>Recent Activities</h3><p>Your latest submissions and updates</p></div>
+        <button class="student-link-button" type="button" data-tab="dtr">View All</button>
+      </div>
+      ${renderStudentActivityTimeline(rec)}
+    </section>
+    <section class="student-panel">
+      <div class="student-panel-head">
+        <div><h3>Upcoming Events</h3><p>Important OJT schedule</p></div>
+        <button class="student-link-button" type="button" aria-label="View calendar"><i data-lucide="calendar-days"></i></button>
+      </div>
+      <div class="student-event-list">
+        ${studentEvent("18","SEP","Progress Review Meeting","8:30 AM · OJT Office","blue")}
+        ${studentEvent("25","SEP","Weekly DTR Deadline","5:00 PM · Online","orange")}
+        ${studentEvent("02","OCT","Company Visit","9:00 AM · Assigned Company","purple")}
+      </div>
+    </section>
+  </div>
+
+  <section class="student-panel student-quick-actions">
+    <div class="student-panel-head"><div><h3>Quick Actions</h3><p>Common student tasks</p></div></div>
+    <div class="student-quick-grid">
+      ${studentQuickAction("clipboard-plus","blue","Log Daily Activity","dtr")}
+      ${studentQuickAction("calendar-check","green","Submit DTR","dtr")}
+      ${studentQuickAction("upload","orange","Upload Requirement","requirements")}
+      ${studentQuickAction("calendar-days","purple","View Attendance","hours")}
+      ${studentQuickAction("chart-pie","blue","View OJT Progress","dashboard")}
+      ${studentQuickAction("message-square","red","Contact Teacher","student-messages")}
+    </div>
+  </section>
+
+  <div class="student-info-banner">
+    <span><i data-lucide="graduation-cap"></i></span>
+    <div><strong>Keep building toward your OJT completion</strong><p>${esc(user.fullName)} · ${esc(gradeLabel)} · ${esc(user.studentId||"No student ID")}</p></div>
+  </div>
+  </div>`;
+}
+
+function initStudentDashboard(){
+  if(currentTab !== "dashboard") return;
+
+  if(studentClockTimer) clearInterval(studentClockTimer);
+  const updateClock=()=>{
+    const dateNode=$("#studentClockDate");
+    const timeNode=$("#studentClockTime");
+    if(!dateNode || !timeNode) return;
+    const now=new Date();
+    dateNode.textContent=now.toLocaleDateString("en-US",{month:"short",day:"2-digit",year:"numeric"});
+    timeNode.textContent=now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+  };
+  updateClock();
+  studentClockTimer=setInterval(updateClock,30000);
+
+  const notification=$("#studentNotificationBtn");
+  if(notification) notification.addEventListener("click",()=>{
+    currentTab="student-messages";
+    render();
+  });
+
+  if(!window.Chart) return;
+  studentCharts.forEach(chart=>chart.destroy());
+  studentCharts=[];
+  const canvas=$("#studentProgressChart");
+  if(!canvas) return;
+  const user=currentUser();
+  const done=totalApprovedHours(user.id);
+  const required=state.settings.requiredHours;
+  const remaining=Math.max(0,required-done);
+  const chart=new Chart(canvas,{
+    type:"doughnut",
+    data:{datasets:[{
+      data:[done,remaining],
+      backgroundColor:["#3478F6","#E7EDF6"],
+      borderWidth:0,
+      hoverOffset:2
+    }]},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      cutout:"72%",
+      plugins:{legend:{display:false},tooltip:{enabled:false}}
+    }
+  });
+  studentCharts.push(chart);
+}
+
+function renderStudentMessages(user){
+  return `
+  <div class="student-topbar"><div><div class="student-eyebrow">Communication</div><h2>Messages</h2>
+    <div class="student-subtitle">Announcements and messages from teachers.</div></div></div>
+  <div class="student-panel student-messages-panel">
+    ${studentAnnouncement("Reminder: Submit Your Weekly DTR","Please submit your weekly attendance record before Friday.","Today","high")}
+    ${studentAnnouncement("OJT Evaluation Schedule","Your coordinator will announce the evaluation schedule soon.","Sep 18","normal")}
+    ${studentAnnouncement("Important OJT Guidelines","Review all requirements before submitting documents.","Sep 15","normal")}
   </div>`;
 }
 
@@ -595,6 +815,8 @@ function renderAdminTab(user){
     case "admin-attendance": return renderAdminAttendance(user);
     case "admin-daily-activities": return renderAdminDailyActivities(user);
     case "admin-reports": return renderAdminReports(user);
+    case "admin-messages": return renderAdminMessages(user);
+    case "admin-profile": return renderAdminProfile(user);
     case "admin-settings": return renderAdminSettings(user);
     default: return renderAdminDashboard(user);
   }
@@ -602,33 +824,126 @@ function renderAdminTab(user){
  
 function allStudents(){ return state.users.filter(u=>u.role==="student"); }
  
+function adminStatCard(icon, accent, label, value, detail, footer){
+  return `
+  <article class="admin-stat-card ${accent}">
+    <span class="admin-stat-icon"><i data-lucide="${icon}"></i></span>
+    <div class="admin-stat-copy"><p>${label}</p><strong>${value}</strong><span>${detail}</span></div>
+    <small>${footer}</small>
+  </article>`;
+}
+
+function adminQuickAction(icon, accent, label, tab){
+  return `<button class="admin-quick-action ${accent}" type="button" data-tab="${tab}">
+    <span><i data-lucide="${icon}"></i></span><b>${label}</b>
+  </button>`;
+}
+
+function adminEvent(day, month, title, subtitle, accent){
+  return `<article class="admin-event">
+    <time class="${accent}"><b>${day}</b><span>${month}</span></time>
+    <div><strong>${title}</strong><span>${subtitle}</span></div>
+  </article>`;
+}
+
+function renderRecentActivityCards(students){
+  const rows=[];
+  students.forEach(st => studentRecord(st.id).dtr.forEach(d => rows.push({...d, student:st})));
+  rows.sort((a,b)=> b.date.localeCompare(a.date));
+  if(!rows.length) return `<div class="admin-empty">No recent activities</div>`;
+  return `<div class="recent-activity-list">${rows.slice(0,4).map(d=>`
+    <article class="recent-activity">
+      <span class="activity-avatar">${esc(d.student.fullName.split(" ").map(s=>s[0]).slice(0,2).join("").toUpperCase())}</span>
+      <div><strong>${esc(d.student.fullName)}</strong><span>${esc(d.task)}</span></div>
+      <time>${fmtDate(d.date)}</time>
+      <b class="activity-status ${d.status}">${d.status}</b>
+    </article>`).join("")}</div>`;
+}
+
 function renderAdminDashboard(user){
   const students = allStudents();
   const totalCompanies = new Set(students.map(st => studentRecord(st.id).company?.name).filter(Boolean)).size;
   const today = new Date().toISOString().slice(0,10);
   const presentToday = students.filter(st => studentRecord(st.id).dtr.some(d => d.date === today)).length;
+  const activitiesLogged = students.reduce((total, st) => total + studentRecord(st.id).dtr.length, 0);
   return `
   <div class="admin-dashboard">
-  <div class="topbar"><div><div class="eyebrow">OJT Management Dashboard</div><h2>Training Program Overview</h2>
-    <div class="sub">Monitoring ${students.length} trainee${students.length!==1?'s':''}</div></div></div>
-  <div class="grid grid-3" style="margin-bottom:18px;">
-    <div class="card stat-card"><div class="num">${students.length}</div><div class="label">Total Students</div></div>
-    <div class="card stat-card"><div class="num">${totalCompanies}</div><div class="label">Total Companies</div><div class="delta up">Active placements</div></div>
-    <div class="card stat-card"><div class="num">${presentToday}</div><div class="label">Present Today</div><div class="delta up">${presentToday} of ${students.length} students recorded</div></div>
-  </div>
-  <div class="card" style="margin-bottom:18px;">
-    <div class="section-head"><h3>Quick Actions</h3><span class="hint" style="margin:0;">Open a management feature</span></div>
-    <div class="quick-actions">
-      <button class="btn secondary" data-tab="admin-users">Add Students</button>
-      <button class="btn secondary" data-tab="admin-students">Add Company</button>
-      <button class="btn secondary" data-tab="admin-attendance">Mark Attendance</button>
-      <button class="btn secondary" data-tab="admin-daily-activities">Log Activity</button>
-      <button class="btn secondary" data-tab="admin-reports">Generate Reports</button>
+  <div class="admin-header">
+    <div>
+      <p class="admin-breadcrumb">Dashboard / Overview</p>
+      <h1>Teacher Dashboard</h1>
+      <p>Monitor student placements, attendance, and training progress.</p>
+    </div>
+    <div class="admin-header-actions">
+      <button class="admin-mobile-menu" id="mobileSidebarToggle" type="button" aria-label="Open menu"><i data-lucide="menu"></i></button>
+      <button class="admin-icon-button" type="button" aria-label="Notifications"><i data-lucide="bell"></i><span></span></button>
+      <div class="admin-live-date">
+        <strong id="teacherClockDate">${fmtDate(today)}</strong>
+        <small id="teacherClockTime"></small>
+      </div>
     </div>
   </div>
-  <div class="card" style="margin-top:18px;">
-    <div class="section-head"><h3>Recent Activities</h3><button class="btn secondary small" data-tab="admin-daily-activities">View all activities →</button></div>
-    ${renderRecentActivities(students)}
+  <div class="admin-stat-grid">
+    ${adminStatCard("users","blue","Total Students",students.length,"Currently enrolled",`+${Math.max(0,students.length)} this term`)}
+    ${adminStatCard("building-2","green","Total Companies",totalCompanies,"Partner organizations","Active placements")}
+    ${adminStatCard("calendar-check","orange","Present Today",presentToday,`${presentToday} of ${students.length} recorded`,"Attendance")}
+    ${adminStatCard("clipboard-list","purple","Activities Logged",activitiesLogged,"All submitted records","Weekly total")}
+  </div>
+  <div class="admin-content-grid">
+    <section class="admin-panel admin-attendance-chart">
+      <div class="admin-panel-head">
+        <div><h3>Weekly Attendance Overview</h3><p>Student attendance for this week</p></div>
+        <button class="admin-period-button" type="button">This Week <i data-lucide="chevron-down"></i></button>
+      </div>
+      <canvas id="weeklyAttendanceChart" height="220"></canvas>
+    </section>
+    <section class="admin-panel admin-grade-chart">
+      <div class="admin-panel-head">
+        <div><h3>Students by Grade</h3><p>Current distribution</p></div>
+      </div>
+      <canvas id="studentGradeChart" height="190"></canvas>
+      <div class="grade-legend">
+        <span><b class="grade-dot grade-blue"></b>Grade 10</span>
+        <span><b class="grade-dot grade-green"></b>Grade 11</span>
+        <span><b class="grade-dot grade-orange"></b>Grade 12</span>
+        <span><b class="grade-dot grade-purple"></b>Others</span>
+      </div>
+    </section>
+  </div>
+  <div class="admin-content-grid admin-bottom-grid">
+    <section class="admin-panel">
+      <div class="admin-panel-head">
+        <div><h3>Recent Activities</h3><p>Latest OJT submissions</p></div>
+        <button class="admin-link-button" type="button" data-tab="admin-daily-activities">View all <i data-lucide="arrow-right"></i></button>
+      </div>
+      ${renderRecentActivityCards(students)}
+    </section>
+    <section class="admin-panel">
+      <div class="admin-panel-head">
+        <div><h3>Upcoming Events</h3><p>Important schedule</p></div>
+        <button class="admin-link-button" type="button" aria-label="Calendar"><i data-lucide="calendar-days"></i></button>
+      </div>
+      <div class="event-list">
+        ${adminEvent("18","SEP","Requirements Submission","OJT Requirements","orange")}
+        ${adminEvent("25","SEP","Attendance Review","Weekly DTR approval","blue")}
+        ${adminEvent("02","OCT","Coordinator Meeting","Training office","purple")}
+      </div>
+    </section>
+  </div>
+  <section class="admin-panel admin-quick-actions">
+    <div class="admin-panel-head"><div><h3>Quick Actions</h3><p>Common management tasks</p></div></div>
+    <div class="quick-actions-grid">
+      ${adminQuickAction("user-plus","blue","Add Student","admin-users")}
+      ${adminQuickAction("building-2","green","Add Company","admin-students")}
+      ${adminQuickAction("calendar-check","orange","Mark Attendance","admin-attendance")}
+      ${adminQuickAction("clipboard-plus","purple","Log Activity","admin-daily-activities")}
+      ${adminQuickAction("file-chart-column","red","Generate Report","admin-reports")}
+      ${adminQuickAction("message-square","blue","Send Message","admin-messages")}
+    </div>
+  </section>
+  <div class="admin-info-banner">
+    <span class="admin-info-icon"><i data-lucide="info"></i></span>
+    <div><strong>Keep OJT records up to date</strong><p>Review attendance and activity submissions regularly to maintain accurate trainee records.</p></div>
   </div>
   </div>`;
 }
@@ -793,6 +1108,122 @@ function renderAdminReports(user){
     <div class="section-head"><h3>Attendance Summary</h3><span class="mono">${attendanceRecords} records</span></div>
     <p class="hint">This report includes all daily time records submitted by students.</p>
   </div>`;
+}
+
+function renderAdminMessages(user){
+  const students = allStudents();
+  return `
+  <div class="topbar"><div><div class="eyebrow">Communication</div><h2>Messages</h2>
+    <div class="sub">Send important updates to students and coordinators.</div></div></div>
+  <div class="admin-messages-grid">
+    <div class="admin-panel">
+      <div class="admin-panel-head"><div><h3>Recipients</h3><p>${students.length} student accounts</p></div></div>
+      <div class="message-recipient-list">
+        ${students.length ? students.map(st=>`
+          <label><input type="checkbox" value="${esc(st.id)}"> <span>${esc(st.fullName)}</span></label>
+        `).join("") : `<div class="admin-empty">No student accounts</div>`}
+      </div>
+    </div>
+    <form class="admin-panel admin-message-form">
+      <div class="admin-panel-head"><div><h3>New Message</h3><p>Compose an announcement</p></div></div>
+      <div class="field"><label>Subject</label><input name="subject" placeholder="Message subject" required></div>
+      <div class="field"><label>Message</label><textarea name="message" rows="7" placeholder="Write your message..." required></textarea></div>
+      <button class="btn" type="button" id="demoSendMessage">Send Message</button>
+    </form>
+  </div>`;
+}
+
+function renderAdminProfile(user){
+  return `
+  <div class="topbar"><div><div class="eyebrow">Account</div><h2>Teacher Profile</h2>
+    <div class="sub">OJT coordinator account information.</div></div></div>
+  <div class="admin-panel admin-profile-card">
+    <div class="admin-profile-avatar">${esc(user.fullName.split(" ").map(s=>s[0]).slice(0,2).join("").toUpperCase())}</div>
+    <dl class="kv">
+      <dt>Full Name</dt><dd>${esc(user.fullName)}</dd>
+      <dt>Email</dt><dd>${esc(user.email)}</dd>
+      <dt>Username</dt><dd class="mono">${esc(user.username)}</dd>
+      <dt>Role</dt><dd>OJT Coordinator</dd>
+    </dl>
+  </div>`;
+}
+
+function initTeacherDashboard(){
+  if(currentTab !== "admin-dashboard") return;
+
+  if(teacherClockTimer) clearInterval(teacherClockTimer);
+  const updateClock = ()=>{
+    const dateNode = $("#teacherClockDate");
+    const timeNode = $("#teacherClockTime");
+    if(!dateNode || !timeNode) return;
+    const now = new Date();
+    dateNode.textContent = now.toLocaleDateString("en-US",{month:"short",day:"2-digit",year:"numeric"});
+    timeNode.textContent = now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+  };
+  updateClock();
+  teacherClockTimer = setInterval(updateClock, 30000);
+
+  if(!window.Chart) return;
+  teacherCharts.forEach(chart=>chart.destroy());
+  teacherCharts=[];
+
+  const lineCanvas = $("#weeklyAttendanceChart");
+  if(lineCanvas){
+    const attendanceRows = allStudents().flatMap(st=>studentRecord(st.id).dtr);
+    const sampleCounts = [72,82,78,88,84,68];
+    const actualCounts = [0,1,2,3,4,5].map(day=>{
+      const count = attendanceRows.filter(d=>{
+        if(!d.date) return false;
+        const index = (new Date(d.date+"T00:00:00").getDay()+6)%7;
+        return index === day;
+      }).length;
+      return allStudents().length ? Math.round((count/allStudents().length)*100) : sampleCounts[day];
+    });
+    const chart = new Chart(lineCanvas,{
+      type:"line",
+      data:{labels:["Mon","Tue","Wed","Thu","Fri","Sat"],datasets:[{
+        label:"Attendance",
+        data: actualCounts.some(v=>v>0) ? actualCounts : sampleCounts,
+        borderColor:"#3478F6",
+        backgroundColor:"rgba(52,120,246,.10)",
+        fill:true,
+        borderWidth:2.5,
+        tension:.38,
+        pointRadius:4,
+        pointBackgroundColor:"#FFFFFF",
+        pointBorderColor:"#3478F6",
+        pointBorderWidth:2
+      }]},
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{grid:{display:false},ticks:{color:"#8A94A6",font:{family:"Inter",size:11}}},
+          y:{min:0,max:100,ticks:{stepSize:25,color:"#8A94A6",font:{family:"Inter",size:11}},grid:{color:"#EEF1F5"}}
+        }
+      }
+    });
+    teacherCharts.push(chart);
+  }
+
+  const doughnutCanvas = $("#studentGradeChart");
+  if(doughnutCanvas){
+    const chart = new Chart(doughnutCanvas,{
+      type:"doughnut",
+      data:{
+        labels:["Grade 10","Grade 11","Grade 12","Others"],
+        datasets:[{data:[12,18,10,6],backgroundColor:["#3478F6","#27AE60","#F5A623","#7B61FF"],borderWidth:0,hoverOffset:4}]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        cutout:"68%",
+        plugins:{legend:{display:false},tooltip:{backgroundColor:"#1B2A4A",padding:10,displayColors:true}}
+      }
+    });
+    teacherCharts.push(chart);
+  }
 }
  
 function renderAdminRequirements(user){
